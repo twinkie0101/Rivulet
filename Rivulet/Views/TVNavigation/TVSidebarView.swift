@@ -44,6 +44,11 @@ struct TVSidebarView: View {
     /// The last profile entered, and the sidebar close a switch away from it asks for.
     @State private var lastProfileId: Int?
     @State private var sidebarCollapseRequest = 0
+    @State private var homeTopRequest = 0
+    /// The open picker came from a return to the app: entering a profile starts a new session.
+    @State private var returnPickerStartsSession = false
+    /// The picker on return is up over a paused video, outside the SwiftUI cover.
+    @State private var isReturnPickerOverPlayer = false
     /// The profile the switcher opened on, and the sidebar reopen that closing
     /// it on the same profile asks for.
     @State private var switcherProfileId: Int?
@@ -170,6 +175,7 @@ struct TVSidebarView: View {
             interactionBlocked: nestedNavState.isNested || nestedNavState.isSettingsSubPage,
             pillSuppressed: isMusicLibrarySelected || isLiveTVSelected || isSearchSelected,
             collapseRequest: sidebarCollapseRequest,
+            homeTopRequest: homeTopRequest,
             profilePanelOpen: showProfileSwitcher,
             profileRowRequest: sidebarProfileRowRequest,
             sections: shellSections,
@@ -386,6 +392,14 @@ struct TVSidebarView: View {
                 profileManager.isPresentingLaunchPicker = false
                 deepLinkHandler.isShellReady = true
 
+                // Back after time away: a new session, so Home from the top,
+                // as a fresh launch would show it.
+                if returnPickerStartsSession {
+                    returnPickerStartsSession = false
+                    selectedTab = .home
+                    homeTopRequest += 1
+                }
+
                 // Load content if not already loaded (profile switch handles its own reload)
                 if dataStore.hubs.isEmpty {
                     Task { await loadLaunchContent() }
@@ -447,6 +461,7 @@ struct TVSidebarView: View {
               authManager.hasCredentials,
               hasCheckedProfilePicker,
               !showProfilePicker,
+              !isReturnPickerOverPlayer,
               !profileManager.needsProfileSelection else { return }
 
         Task {
@@ -456,19 +471,70 @@ struct TVSidebarView: View {
             }
             guard profileManager.hasMultipleProfiles,
                   !showProfilePicker,
+                  !isReturnPickerOverPlayer,
                   !profileManager.needsProfileSelection else { return }
 
             isAwaitingProfileSelection = true
             deepLinkHandler.isShellReady = false
-            // The picker cannot present over a player, and the last profile's
-            // music should not keep playing under it.
+            // The last profile's music should not keep playing under the picker.
             MusicQueue.shared.stop()
             MusicQueue.shared.clear()
             showProfileSwitcher = false
+
+            // A video is open (paused under the screensaver, or left playing):
+            // ask over it, so the same profile picks up where it was.
+            if let top = Self.topPresentedViewController(), Self.presentedVideoPlayer() != nil {
+                presentReturnPicker(over: top)
+                return
+            }
+
             Self.rootViewController()?.dismiss(animated: false)
             profileChosen = false
+            returnPickerStartsSession = true
             showProfilePicker = true
         }
+    }
+
+    /// The picker on return, over an open video. The SwiftUI cover cannot
+    /// present above the player, so this hosts the same picker from the top
+    /// controller. It closes only once a profile is entered (Menu is swallowed).
+    /// Entering the same profile leaves the video paused where it was; entering
+    /// another closes it, and that profile starts at the top of Home.
+    private func presentReturnPicker(over top: UIViewController) {
+        let startingProfileId = profileManager.selectedUser?.id
+        Self.presentedVideoPlayer()?.viewModel?.pause()
+        isReturnPickerOverPlayer = true
+
+        let host = UIHostingController(rootView: AnyView(EmptyView()))
+        host.rootView = AnyView(ProfilePickerOverlay(isPresented: Binding(
+            get: { true },
+            set: { [weak host] shown in
+                guard !shown, let host, host.presentingViewController != nil else { return }
+                host.dismiss(animated: true) {
+                    isReturnPickerOverPlayer = false
+                    isAwaitingProfileSelection = false
+                    profileManager.isPresentingLaunchPicker = false
+                    deepLinkHandler.isShellReady = true
+                    guard profileManager.selectedUser?.id != startingProfileId else { return }
+                    // Another profile: the paused video was the last one's.
+                    // It saves its progress to that profile as it closes.
+                    Self.rootViewController()?.dismiss(animated: false)
+                    selectedTab = .home
+                    homeTopRequest += 1
+                }
+            })))
+        host.modalPresentationStyle = .fullScreen
+        top.present(host, animated: true)
+    }
+
+    /// The video player, if one is presented anywhere in the stack.
+    private static func presentedVideoPlayer() -> PlayerContainerViewController? {
+        var vc = rootViewController()?.presentedViewController
+        while let current = vc {
+            if let player = current as? PlayerContainerViewController { return player }
+            vc = current.presentedViewController
+        }
+        return nil
     }
 
     // MARK: - Launch Content

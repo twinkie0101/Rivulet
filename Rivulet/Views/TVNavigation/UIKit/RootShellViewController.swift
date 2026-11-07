@@ -49,6 +49,19 @@ final class RootShellViewController: UIViewController {
         }
     }
 
+    /// A counter: each bump shows Home at its top row with the sidebar closed,
+    /// as a fresh launch does (the profile picker on return starts a new session).
+    var homeTopRequest = 0 {
+        didSet {
+            guard homeTopRequest != oldValue, isViewLoaded else { return }
+            applySelection(.home)
+            belowTop = false
+            collapseSidebar()
+            updateChromeVisibility()
+            contentVCs[.home].flatMap { SidebarReselection.target(in: $0.view) }?.reselectSidebarTab()
+        }
+    }
+
     /// Drops every cached page but Home: they hold the previous profile's items.
     private func evictCachedContent() {
         for (tab, vc) in contentVCs where tab != .home {

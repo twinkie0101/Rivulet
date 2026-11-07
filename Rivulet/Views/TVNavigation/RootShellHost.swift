@@ -27,6 +27,8 @@ struct RootShellHost: UIViewControllerRepresentable {
     var pillSuppressed: Bool
     /// Bumped to close the sidebar from SwiftUI (after a profile switch).
     var collapseRequest = 0
+    /// Bumped to show Home at its top row (a new session after the picker on return).
+    var homeTopRequest = 0
     /// The profile panel is up (the pill names the user), and the bump that
     /// reopens the sidebar on the profile row when it closes with no switch.
     var profilePanelOpen = false
@@ -60,5 +62,6 @@ struct RootShellHost: UIViewControllerRepresentable {
         shell.profileRowRequest = profileRowRequest
         shell.updateSections(sections)
         shell.applySelection(selection)
+        shell.homeTopRequest = homeTopRequest
     }
 }
